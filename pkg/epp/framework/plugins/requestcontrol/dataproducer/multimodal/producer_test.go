@@ -188,6 +188,33 @@ func TestPreRequestFallsBackToPrimaryProfileWhenNoEncodeProfile(t *testing.T) {
 	assert.Contains(t, cache["hash-a"], pod.String())
 }
 
+func TestPreRequestCustomEncodeProfileParameter(t *testing.T) {
+	customProfileName := "my-custom-encode"
+	producer := newTestProducer(t, &Parameters{EncodeProfile: customProfileName}, nil)
+	encodePod := k8stypes.NamespacedName{Namespace: "default", Name: "encode-pod"}
+	decodePod := k8stypes.NamespacedName{Namespace: "default", Name: "decode-pod"}
+
+	request := requestWithHashes("req-1", map[string]int{"hash-x": 1})
+
+	require.NoError(t, producer.Produce(context.Background(), request,
+		[]scheduling.Endpoint{newEndpoint(encodePod), newEndpoint(decodePod)}))
+
+	result := &scheduling.SchedulingResult{
+		PrimaryProfileName: "decode",
+		ProfileResults: map[string]*scheduling.ProfileRunResult{
+			"decode":           {TargetEndpoints: []scheduling.Endpoint{newEndpoint(decodePod)}},
+			customProfileName:  {TargetEndpoints: []scheduling.Endpoint{newEndpoint(encodePod)}},
+		},
+	}
+
+	_ = producer.PreRequest(context.Background(), request, result)
+	producer.wg.Wait()
+
+	cache := producer.cacheSnapshot()
+	assert.Contains(t, cache["hash-x"], encodePod.String(), "custom encode profile pod should be recorded")
+	assert.NotContains(t, cache["hash-x"], decodePod.String(), "decode profile pod should not be recorded")
+}
+
 func TestLRUEviction(t *testing.T) {
 	producer := newTestProducer(t, &Parameters{CacheSizeInMBPerServer: 4}, nil)
 	endpoint := newEndpoint(k8stypes.NamespacedName{Namespace: "default", Name: "pod-a"})
